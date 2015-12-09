@@ -21,7 +21,10 @@ var (
 	conv_         *cuda.DemagConvolution // does the heavy lifting and provides FFTM
 	DemagAccuracy = 6.0                  // Demag accuracy (divide cubes in at most N^3 points)
 	CacheDir      = ""                   // directory for kernel cache
-	TestDemag     = false                // enable convolution self-test
+        TestDemag     = false                // enable convolution self-test
+	EnableNewellDemag = false	     // enable/disable demag field calculated a la Newell
+	asymptotic_radius = 32		     // Radius (in number of cells) beyond which demag calculations fall back to far-field approximation
+	zero_self_demag = 0		     // Include/exclude self-demag
 )
 
 func init() {
@@ -30,6 +33,9 @@ func init() {
 	M_full.init("m_full", "A/m", "Unnormalized magnetization", SetMFull)
 	DeclVar("EnableDemag", &EnableDemag, "Enables/disables demag (default=true)")
 	DeclVar("DemagAccuracy", &DemagAccuracy, "Controls accuracy of demag kernel")
+	DeclVar("EnableNewellDemag", &EnableNewellDemag, "Enables/disables Newell demag (default=true)")
+	DeclVar("asymptotic_radius", &asymptotic_radius, "Radius (in number of cells) beyond which demag calculations fall back to far-field approximation (default=32)")
+	DeclVar("zero_self_demag", &zero_self_demag, "Include/exclude self-demag in each cell (default=true)")
 	B_demag.init("B_demag", "T", "Magnetostatic field", SetDemagField)
 	E_demag = NewGetScalar("E_demag", "J", "Magnetostatic energy", GetDemagEnergy)
 	Edens_demag.init("Edens_demag", "J/m3", "Magnetostatic energy density", makeEdensAdder(&B_demag, -0.5))
@@ -46,10 +52,15 @@ func init() {
 
 // Sets dst to the current demag field
 func SetDemagField(dst *data.Slice) {
-	if EnableDemag {
+	if (EnableDemag || EnableNewellDemag) {
 		if NoDemagSpins.isZero() {
-			// Normal demag, everywhere
-			demagConv().Exec(dst, M.Buffer(), geometry.Gpu(), Bsat.gpuLUT1(), regions.Gpu())
+			if EnableDemag {
+				// Normal demag, everywhere
+				demagConv().Exec(dst, M.Buffer(), geometry.Gpu(), Bsat.gpuLUT1(), regions.Gpu())
+			} else {
+				// Normal demag (a la Newell), everywhere
+				newellDemagConv().Exec(dst, M.Buffer(), geometry.Gpu(), Bsat.gpuLUT1(), regions.Gpu())
+			}
 		} else {
 			setMaskedDemagField(dst)
 		}
@@ -113,6 +124,17 @@ func demagConv() *cuda.DemagConvolution {
 		SetBusy(true)
 		defer SetBusy(false)
 		kernel := mag.DemagKernel(Mesh().Size(), Mesh().PBC(), Mesh().CellSize(), DemagAccuracy, CacheDir)
+		conv_ = cuda.NewDemag(Mesh().Size(), Mesh().PBC(), kernel, TestDemag)
+	}
+	return conv_
+}
+
+// returns Newell demag convolution, making sure it's initialized
+func newellDemagConv() *cuda.DemagConvolution {
+	if conv_ == nil {
+		SetBusy(true)
+		defer SetBusy(false)
+		kernel := mag.NewellDemagKernel(Mesh().Size(), Mesh().PBC(), Mesh().CellSize(), asymptotic_radius, zero_self_demag, CacheDir)
 		conv_ = cuda.NewDemag(Mesh().Size(), Mesh().PBC(), kernel, TestDemag)
 	}
 	return conv_
