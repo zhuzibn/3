@@ -20,14 +20,23 @@ var (
 	B_anis     = NewVectorField("B_anis", "T", "Anisotropy filed", AddAnisotropyField)
 	Edens_anis = NewScalarField("Edens_anis", "J/m3", "Anisotropy energy density", AddAnisotropyEnergyDensity)
 	E_anis     = NewScalarValue("E_anis", "J", "total anisotropy energy", GetAnisotropyEnergy)
+	KuXX       = NewScalarParam("KuXX", "J/m3", "1st order uniaxial anisotropy constant (XX) for monodomain shape anisotropy", &kuxx_red)
+	KuYY       = NewScalarParam("KuYY", "J/m3", "1st order uniaxial anisotropy constant (YY) for monodomain shape anisotropy", &kuyy_red)
+	KuZZ       = NewScalarParam("KuZZ", "J/m3", "1st order uniaxial anisotropy constant (ZZ) for monodomain shape anisotropy", &kuzz_red)
+	AnisUxx    = NewVectorParam("anisUxx", "", "Uniaxial anisotropy direction (XX) for monodomain shape anisotropy")
+	AnisUyy    = NewVectorParam("anisUyy", "", "Uniaxial anisotropy direction (YY) for monodomain shape anisotropy")
+	AnisUzz    = NewVectorParam("anisUzz", "", "Uniaxial anisotropy direction (ZZ) for monodomain shape anisotropy")
 )
 
 var (
-	ku1_red DerivedParam
-	ku2_red DerivedParam
-	kc1_red DerivedParam
-	kc2_red DerivedParam
-	kc3_red DerivedParam
+	ku1_red  DerivedParam
+	ku2_red  DerivedParam
+	kc1_red  DerivedParam
+	kc2_red  DerivedParam
+	kc3_red  DerivedParam
+	kuxx_red DerivedParam
+	kuyy_red DerivedParam
+	kuzz_red DerivedParam
 )
 
 var zero param // utility zero parameter
@@ -58,6 +67,18 @@ func init() {
 	kc3_red.init(SCALAR, []parent{Kc3, Msat}, func(p *DerivedParam) {
 		paramDiv(p.cpu_buf, Kc3.cpuLUT(), Msat.cpuLUT())
 	})
+	//kuxx_red = KuXX / Msat
+	kuxx_red.init(SCALAR, []parent{KuXX, Msat}, func(p *DerivedParam) {
+		paramDiv(p.cpu_buf, KuXX.cpuLUT(), Msat.cpuLUT())
+	})
+	//kuyy_red = KuYY / Msat
+	kuyy_red.init(SCALAR, []parent{KuYY, Msat}, func(p *DerivedParam) {
+		paramDiv(p.cpu_buf, KuYY.cpuLUT(), Msat.cpuLUT())
+	})
+	//kuzz_red = KuZZ / Msat
+	kuzz_red.init(SCALAR, []parent{KuZZ, Msat}, func(p *DerivedParam) {
+		paramDiv(p.cpu_buf, KuZZ.cpuLUT(), Msat.cpuLUT())
+	})
 }
 
 func addUniaxialAnisotropyField(dst *data.Slice) {
@@ -72,17 +93,31 @@ func addCubicAnisotropyField(dst *data.Slice) {
 	}
 }
 
+func addShapeAnisotropyField(dst *data.Slice) {
+	if kuxx_red.nonZero() {
+		cuda.AddUniaxialAnisotropy(dst, M.Buffer(), kuxx_red.gpuLUT1(), zero.gpuLUT1(), AnisUxx.gpuLUT(), regions.Gpu())
+	}
+	if kuyy_red.nonZero() {
+		cuda.AddUniaxialAnisotropy(dst, M.Buffer(), kuyy_red.gpuLUT1(), zero.gpuLUT1(), AnisUyy.gpuLUT(), regions.Gpu())
+	}
+	if kuzz_red.nonZero() {
+		cuda.AddUniaxialAnisotropy(dst, M.Buffer(), kuzz_red.gpuLUT1(), zero.gpuLUT1(), AnisUzz.gpuLUT(), regions.Gpu())
+	}
+}
+
 // Add the anisotropy field to dst
 func AddAnisotropyField(dst *data.Slice) {
 	addUniaxialAnisotropyField(dst)
 	addCubicAnisotropyField(dst)
+	addShapeAnisotropyField(dst)
 }
 
 func AddAnisotropyEnergyDensity(dst *data.Slice) {
 	haveUnixial := ku1_red.nonZero() || ku2_red.nonZero()
 	haveCubic := kc1_red.nonZero() || kc2_red.nonZero() || kc3_red.nonZero()
+	haveShape := kuxx_red.nonZero() || kuyy_red.nonZero() || kuzz_red.nonZero()
 
-	if !haveUnixial && !haveCubic {
+	if !haveUnixial && !haveCubic && !haveShape {
 		return
 	}
 
@@ -122,6 +157,23 @@ func AddAnisotropyEnergyDensity(dst *data.Slice) {
 		cuda.Zero(buf)
 		cuda.AddCubicAnisotropy(buf, M.Buffer(), zero.gpuLUT1(), zero.gpuLUT1(), kc3_red.gpuLUT1(), AnisC1.gpuLUT(), AnisC2.gpuLUT(), regions.Gpu())
 		cuda.AddDotProduct(dst, -1./8., buf, Mf)
+	}
+
+	if haveShape {
+		// XX
+		cuda.Zero(buf)
+		cuda.AddUniaxialAnisotropy(buf, M.Buffer(), kuxx_red.gpuLUT1(), zero.gpuLUT1(), AnisUxx.gpuLUT(), regions.Gpu())
+		cuda.AddDotProduct(dst, -1./2., buf, Mf)
+
+		// YY
+		cuda.Zero(buf)
+		cuda.AddUniaxialAnisotropy(buf, M.Buffer(), kuyy_red.gpuLUT1(), zero.gpuLUT1(), AnisUyy.gpuLUT(), regions.Gpu())
+		cuda.AddDotProduct(dst, -1./2., buf, Mf)
+
+		// ZZ
+		cuda.Zero(buf)
+		cuda.AddUniaxialAnisotropy(buf, M.Buffer(), kuzz_red.gpuLUT1(), zero.gpuLUT1(), AnisUzz.gpuLUT(), regions.Gpu())
+		cuda.AddDotProduct(dst, -1./2., buf, Mf)
 	}
 }
 
