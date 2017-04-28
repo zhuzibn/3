@@ -20,9 +20,11 @@ tableautosave(1e-12)
 
 // Get idea of energy scale
 E0 := E_total.get()
+print("E0:", E0)
 alpha = 1
 run(1e-9)
 E1 := E_total.get()
+print("E1:", E1)
 Delta1 := E1-E0
 print("DeltaE, damped:", Delta1)
 

@@ -151,6 +151,13 @@ func (c *DemagConvolution) init(realKern [3][3]*data.Slice) {
 	kCmplx := data.NewSlice(1, kCSize) // not yet exploiting X symmetry
 	kc := kCmplx.Scalars()
 
+	// Print calculated tensor
+	tmpTen := realKern[0][0].Scalars()
+	for iz := 0; iz < kCSize[Z]; iz++ {
+		for iy := 0; iy < kCSize[Y]; iy++ {
+			fmt.Println("[", iz, ", ", iy, "] Tensor: ", tmpTen[iz][iy])
+		}
+	}
 	for i := 0; i < 3; i++ {
 		for j := i; j < 3; j++ { // upper triangular part
 			if realKern[i][j] != nil { // ignore 0's
@@ -168,6 +175,17 @@ func (c *DemagConvolution) init(realKern [3][3]*data.Slice) {
 					}
 				}
 
+				// extract non-redundant part (Y,Z symmetry)
+				if ( i == 0 && j == 0 ) {
+					for iz := 0; iz < kCSize[Z]; iz++ {
+						for iy := 0; iy < kCSize[Y]; iy++ {
+							for ix := 0; ix < kCSize[X]; ix++ {
+								kc[iz][iy][ix] = kfulls[iz][iy][ix]
+							}
+						fmt.Println("[", iz, ", ", iy, "] Comp: ", kfulls[iz][iy])
+						}
+					}
+				}
 				// extract real parts (X symmetry)
 				scaleRealParts(fftKern, kCmplx, 1/float32(c.fwPlan.InputLen()))
 				c.kern[i][j] = GPUCopy(fftKern)

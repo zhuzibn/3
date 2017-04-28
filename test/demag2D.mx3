@@ -3,7 +3,7 @@
 	Kernel should be approximately 0, 0, -1 
 */
 
-	SetGridSize(128, 128, 1)
+	SetGridSize(4, 4, 1)
 	SetCellSize(1e-9, 1e-9, 0.5e-9)
 
 	Msat = 1 / mu0
